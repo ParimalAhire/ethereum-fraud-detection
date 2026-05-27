@@ -1,87 +1,139 @@
-import ReactFlow, {
-  Background, Controls, MiniMap, useNodesState, useEdgesState, Handle, Position,
-} from 'reactflow'
-import { useEffect, useCallback, useState } from 'react'
-import 'reactflow/dist/style.css'
-
-// Custom fraud node
-function FraudNode({ data }) {
-  const size = data.isRoot ? 'w-10 h-10 border-2' : 'w-7 h-7'
-  return (
-    <div
-      className={`${size} rounded-full flex items-center justify-center cursor-pointer border`}
-      style={{
-        backgroundColor: data.color + '33',
-        borderColor: data.color,
-        boxShadow: data.isRoot ? `0 0 12px ${data.color}` : 'none',
-      }}
-      title={`${data.address}\nScore: ${data.score}`}
-    >
-      <Handle type="target" position={Position.Top} style={{ opacity: 0, width: 0, height: 0 }} />
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 0, height: 0 }} />
-      {data.isRoot && <span className="text-white text-xs">★</span>}
-    </div>
-  )
-}
-
-const nodeTypes = { fraudNode: FraudNode }
+import { useEffect, useRef, useState, useCallback } from 'react'
+import ForceGraph3D from 'react-force-graph-3d'
+import * as THREE from 'three'
 
 export default function TransactionGraph({ graphData, wallet }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const fgRef = useRef()
   const [selected, setSelected] = useState(null)
+  const [graphReady, setGraphReady] = useState(false)
+  const [fg3dData, setFg3dData] = useState({ nodes: [], links: [] })
 
   useEffect(() => {
-    if (graphData?.nodes && graphData?.edges) {
-      setNodes(graphData.nodes)
+    if (!graphData?.nodes || !graphData?.edges) return
 
-      // Format edges properly for React Flow
-      const formattedEdges = graphData.edges.map(e => ({
-        ...e,
-        type: 'default',
-        markerEnd: {
-          type: 'arrowclosed',
-          color: e.style?.stroke || '#ef4444',
-        },
-        style: {
-          ...e.style,
-          strokeWidth: e.style?.stroke === '#ef4444' ? 2 : 1,
-          opacity: 0.8,
-        },
-      }))
-      setEdges(formattedEdges)
-    }
+    // Convert React Flow format to force-graph format
+    const nodes = graphData.nodes.map(n => ({
+      id: n.id,
+      address: n.data.address,
+      score: n.data.score,
+      xgb: n.data.xgb,
+      sage: n.data.sage,
+      isRoot: n.data.isRoot,
+      color: n.data.color,
+    }))
+
+    const links = graphData.edges.map(e => ({
+      source: e.source,
+      target: e.target,
+      score: e.data?.score || 0,
+      value: e.data?.value || 0,
+      color: e.style?.stroke || '#ef4444',
+    }))
+
+    setFg3dData({ nodes, links })
+    setGraphReady(true)
   }, [graphData])
 
-  const onNodeClick = useCallback((_, node) => setSelected(node.data), [])
+  // Auto rotate on load
+  useEffect(() => {
+    if (!graphReady || !fgRef.current) return
+    let angle = 0
+    const interval = setInterval(() => {
+      if (fgRef.current) {
+        fgRef.current.cameraPosition({
+          x: 300 * Math.sin(angle),
+          z: 300 * Math.cos(angle),
+        })
+        angle += 0.003
+      }
+    }, 16)
+    // Stop rotation after 5 seconds
+    setTimeout(() => clearInterval(interval), 5000)
+    return () => clearInterval(interval)
+  }, [graphReady])
+
+  const handleNodeClick = useCallback((node) => {
+    setSelected(node)
+    // Zoom to clicked node
+    if (fgRef.current) {
+      fgRef.current.cameraPosition(
+        { x: node.x + 50, y: node.y + 50, z: node.z + 100 },
+        node,
+        1000
+      )
+    }
+  }, [])
+
+  const nodeThreeObject = useCallback((node) => {
+    const isRoot = node.isRoot
+    const radius = isRoot ? 8 : 4
+    const color = node.color || '#22c55e'
+
+    const geometry = new THREE.SphereGeometry(radius, 16, 16)
+    const material = new THREE.MeshLambertMaterial({
+      color,
+      transparent: true,
+      opacity: isRoot ? 1.0 : 0.85,
+    })
+    const sphere = new THREE.Mesh(geometry, material)
+
+    // Add glow ring for root node
+    if (isRoot) {
+      const ringGeo = new THREE.RingGeometry(10, 13, 32)
+      const ringMat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.4,
+        side: THREE.DoubleSide,
+      })
+      const ring = new THREE.Mesh(ringGeo, ringMat)
+      sphere.add(ring)
+
+      // Add star label
+      const canvas = document.createElement('canvas')
+      canvas.width = 64
+      canvas.height = 64
+      const ctx = canvas.getContext('2d')
+      ctx.font = '40px Arial'
+      ctx.fillStyle = 'white'
+      ctx.textAlign = 'center'
+      ctx.fillText('★', 32, 48)
+      const texture = new THREE.CanvasTexture(canvas)
+      const spriteMat = new THREE.SpriteMaterial({ map: texture })
+      const sprite = new THREE.Sprite(spriteMat)
+      sprite.scale.set(16, 16, 1)
+      sphere.add(sprite)
+    }
+
+    return sphere
+  }, [])
 
   return (
     <div className="relative bg-dark-800 rounded-xl border border-dark-500 overflow-hidden" style={{ height: 520 }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
-        nodeTypes={nodeTypes}
-        fitView
-        attributionPosition="bottom-left"
-        defaultEdgeOptions={{
-          type: 'default',
-          style: { strokeWidth: 1.5, opacity: 0.8 },
-        }}
-      >
-        <Background color="#1f2a4a" gap={20} />
-        <Controls className="bg-dark-700 border-dark-500" />
-        <MiniMap
-          nodeColor={n => n.data?.color || '#6b7280'}
-          maskColor="#0f0f1eaa"
-          className="bg-dark-700 border border-dark-500 rounded-lg"
+      {graphReady && (
+        <ForceGraph3D
+          ref={fgRef}
+          graphData={fg3dData}
+          nodeThreeObject={nodeThreeObject}
+          nodeThreeObjectExtend={false}
+          nodeLabel={node => `${node.address}\nScore: ${(node.score * 100).toFixed(1)}%`}
+          onNodeClick={handleNodeClick}
+          linkColor={link => link.color}
+          linkWidth={link => link.score > 0.5 ? 2 : 1}
+          linkDirectionalArrowLength={4}
+          linkDirectionalArrowRelPos={1}
+          linkDirectionalParticles={link => link.score > 0.5 ? 3 : 0}
+          linkDirectionalParticleSpeed={0.006}
+          linkDirectionalParticleColor={link => link.color}
+          backgroundColor="#0f0f1e"
+          width={window.innerWidth > 1200 ? 1100 : window.innerWidth - 60}
+          height={520}
+          showNavInfo={false}
         />
-      </ReactFlow>
+      )}
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-dark-800/90 rounded-lg p-3 border border-dark-500 text-xs space-y-1">
+      <div className="absolute bottom-4 left-4 bg-dark-800/90 rounded-lg p-3 border border-dark-500 text-xs space-y-1 z-10">
         {[['#22c55e', 'Licit (< 0.3)'], ['#eab308', 'Suspicious (0.3–0.5)'], ['#ef4444', 'Fraud (> 0.5)']].map(([color, label]) => (
           <div key={label} className="flex items-center gap-2">
             <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
@@ -92,11 +144,12 @@ export default function TransactionGraph({ graphData, wallet }) {
           <span className="text-white">★</span>
           <span className="text-gray-400">Target wallet</span>
         </div>
+        <p className="text-gray-600 mt-1">🖱 Drag to rotate · Scroll to zoom</p>
       </div>
 
       {/* Node detail panel */}
       {selected && (
-        <div className="absolute top-4 right-4 bg-dark-800/95 rounded-lg p-3 border border-dark-500 text-xs w-56">
+        <div className="absolute top-4 right-4 bg-dark-800/95 rounded-lg p-3 border border-dark-500 text-xs w-56 z-10">
           <div className="flex items-center justify-between mb-2">
             <span className="text-gray-400">Wallet Detail</span>
             <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-white">✕</button>
