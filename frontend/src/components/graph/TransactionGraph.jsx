@@ -1,5 +1,5 @@
 import ReactFlow, {
-  Background, Controls, MiniMap, useNodesState, useEdgesState,
+  Background, Controls, MiniMap, useNodesState, useEdgesState, Handle, Position,
 } from 'reactflow'
 import { useEffect, useCallback, useState } from 'react'
 import 'reactflow/dist/style.css'
@@ -12,11 +12,13 @@ function FraudNode({ data }) {
       className={`${size} rounded-full flex items-center justify-center cursor-pointer border`}
       style={{
         backgroundColor: data.color + '33',
-        borderColor:     data.color,
-        boxShadow:       data.isRoot ? `0 0 12px ${data.color}` : 'none',
+        borderColor: data.color,
+        boxShadow: data.isRoot ? `0 0 12px ${data.color}` : 'none',
       }}
       title={`${data.address}\nScore: ${data.score}`}
     >
+      <Handle type="target" position={Position.Top} style={{ opacity: 0, width: 0, height: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 0, height: 0 }} />
       {data.isRoot && <span className="text-white text-xs">★</span>}
     </div>
   )
@@ -30,8 +32,25 @@ export default function TransactionGraph({ graphData, wallet }) {
   const [selected, setSelected] = useState(null)
 
   useEffect(() => {
-    if (graphData?.nodes) setNodes(graphData.nodes)
-    if (graphData?.edges) setEdges(graphData.edges)
+    if (graphData?.nodes && graphData?.edges) {
+      setNodes(graphData.nodes)
+
+      // Format edges properly for React Flow
+      const formattedEdges = graphData.edges.map(e => ({
+        ...e,
+        type: 'default',
+        markerEnd: {
+          type: 'arrowclosed',
+          color: e.style?.stroke || '#ef4444',
+        },
+        style: {
+          ...e.style,
+          strokeWidth: e.style?.stroke === '#ef4444' ? 2 : 1,
+          opacity: 0.8,
+        },
+      }))
+      setEdges(formattedEdges)
+    }
   }, [graphData])
 
   const onNodeClick = useCallback((_, node) => setSelected(node.data), [])
@@ -47,6 +66,10 @@ export default function TransactionGraph({ graphData, wallet }) {
         nodeTypes={nodeTypes}
         fitView
         attributionPosition="bottom-left"
+        defaultEdgeOptions={{
+          type: 'default',
+          style: { strokeWidth: 1.5, opacity: 0.8 },
+        }}
       >
         <Background color="#1f2a4a" gap={20} />
         <Controls className="bg-dark-700 border-dark-500" />

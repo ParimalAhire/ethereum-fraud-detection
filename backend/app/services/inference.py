@@ -315,9 +315,15 @@ def build_react_flow_graph(G, scores, edge_scores, root_addr):
 
     # Limit to top 150 nodes for performance
     if G.number_of_nodes() > 150:
-        top  = sorted(scores, key=lambda a: scores[a]["ensemble"], reverse=True)[:120]
-        keep = set(top) | {root_addr}
-        G    = G.subgraph(keep).copy()
+        # Use BFS from root to keep connected nodes instead of top scorers
+        try:
+            lengths  = nx.single_source_shortest_path_length(G, root_addr)
+            closest  = sorted(lengths.keys(), key=lambda n: lengths[n])[:149]
+            keep     = set(closest) | {root_addr}
+        except Exception:
+            top  = sorted(scores, key=lambda a: scores[a]["ensemble"], reverse=True)[:120]
+            keep = set(top) | {root_addr}
+        G = G.subgraph(keep).copy()
 
     import random
     pos = nx.spring_layout(G, seed=42, k=0.9 / max(1, G.number_of_nodes() ** 0.5))
